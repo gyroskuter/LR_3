@@ -1,0 +1,310 @@
+---
+title: "lab04"
+author: "kts"
+date: "2025-11-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(writexl)
+library(corrplot)
+library("readxl")
+library(caret)
+library(e1071) 
+library(caTools)
+library(ggplot2)
+library(DescTools)
+library(knitr)
+library(car)
+library(psych)
+library(yardstick)
+library(dplyr)
+library(writexl)
+```
+
+```{r}
+set.seed(666) #чтобы рандом был одним и тем же
+setwd("C:/Users/timur/OneDrive/Рабочий стол/Studying/aw5/Statistics_5/lab04")
+data <- read_xlsx("Вариант124_Б23-902_Кривенко.xlsx")
+nrow(data)
+```
+
+
+0. Подготовка данных
+
+
+Поделим данные на те, где указан уровень счастья и где нет
+```{r}
+na_rows <- is.na(data$Ощущаемое_счастье)
+df_pred <- data[na_rows, ]        # для прогноза
+df_train <- data[!na_rows, ]       # для обучения
+
+```
+```{r}
+summary(df_pred)
+```
+
+Очистим от пустых значений
+```{r}
+#в тренировочном сете удалим все Na
+df_train <- na.omit(df_train)
+nrow(df_train)
+```
+ 
+
+
+1. Определим какие признаки состояния наиболее сильно связаны с "уровнем счастья". 
+Для этого воспользуемся **коэффициентом корреляции Спирмана**.
+Его используем потому, что в отличие от Пирсона, тут используются ранги. 
+![](C:/Users/timur/OneDrive/Рабочий стол/Studying/aw5/Statistics_5/lab04/pics/Spearman.png)
+
+
+Для оценки силы корреляции будем пользоваться **шкалой Чеддока**
+![шкала Чеддока](C:/Users/timur/OneDrive/Рабочий стол/Studying/aw5/Statistics_5/lab04/pics/Cheddok.png)
+```{r}
+spearman_matrix = data.frame(matrix(nrow=11, ncol=4))
+names(spearman_matrix) <- c('№', 'Признак', 'Значение', 'Вывод')
+a <- df_train[, 25]
+for (i in 13:24){
+  b <- df_train[, i]
+  c <- cor(x = a,
+    y = b,
+    method = "spearman",
+    "complete.obs")
+  spearman_matrix[i-13, 1] <- i
+  spearman_matrix[i-13, 2] <- colnames(df_train[i])
+  spearman_matrix[i-13, 3] <- c[1]
+  if (abs(c[1]) < 0.3){
+     spearman_matrix[i-13, 4] <- "Слабая корреляция"
+  } else if (abs(c[1]) >= 0.3 & abs(c[1]) < 0.5){
+    spearman_matrix[i-13, 4] <- "Умеренная корреляция"
+  } else if (abs(c[1]) >= 0.5 & abs(c[1]) < 0.7){
+    spearman_matrix[i-13, 4] <- "Заметная корреляция"
+  } else if (abs(c[1]) >= 0.7 & abs(c[1]) < 0.9){
+    spearman_matrix[i-13, 4] <- "Высокая корреляция"
+  } else {
+    spearman_matrix[i-13, 4] <- "Весьма высокая корреляция"
+  }
+  
+}
+kable(spearman_matrix)
+```
+
+
+
+Возьмем топ 3 признака по значимости
+```{r}
+mv_status_ind <- (head(spearman_matrix[order(abs(spearman_matrix$Значение), decreasing = TRUE), ], 3)) #Most ?Valueble? status 
+kable(mv_status_ind)
+```
+
+
+Построим графики линейной зависимости.
+```{r}
+#Свобода граждан самостоятельно принимать жизненно важные решения
+ggplot(df_train, aes(x = Ощущаемое_счастье, y = `Индекс отношения к коррупции`)) +
+  geom_point(color="steelblue") + 
+  geom_smooth(method = "lm", se = FALSE, color="pink") 
+  labs(title = "CGPA and Package regression", x = "CGPA", y = "Y")
+
+
+ggplot(df_train, aes(x = Ощущаемое_счастье, y = `Чувство технологического прогресса`)) +
+  geom_point(color="tomato") + 
+  geom_smooth(method = "lm", se = FALSE, color="darkgreen") 
+  labs(title = "Корреляция")  
+  
+ggplot(df_train, aes(x = Ощущаемое_счастье, y = `Ожидаемая продолжительность здоровой жизни`)) +
+  geom_point(color="gray") + 
+  geom_smooth(method = "lm", se = FALSE, color="purple") 
+  labs(title = "Корреляция")
+  
+```
+
+
+
+2.
+Определим, как влияют признаки причины на **выбранные** признаки состояни
+```{r}
+cols <- c(14, 17, 22, 2:13)
+data_pp <- df_train[, cols]
+colnames(data_pp) <- c("ExpLiv","Corup","TechFeel",
+                          "AvgEarn","AlcAm","FamSize","Grad","FoodPer", "Gini","Ecol","LTE","VirDeath","PVol")
+data_pp <- data_pp[, 1:13] #почему эти Na создаются????
+cor.plot(cor(data_pp, method = "spearman"), cex = 0.5, cex.axis = 0.49, stars = F,
+         pval = corr.test((data_pp), method = "spearman")$p)
+
+```
+
+
+```{r, echo=FALSE}
+cat("Где: ", "ExpLiv - Ожидаемая продолжительность здоровой жизни", 
+    "Corup - Индекс отношения к коррупции",
+    "TechFeel - Чувство технологического прогресса",
+    "AvgEarn - Среднегодовой доход, тыс. $", 
+    "AlcAm - Объем потребленного алкоголя в год, л.",
+    "FamSize - Количество членов семьи", 
+    "Grad - Количество лет образования",
+    "FoodPer - Доля от дохода семьи которая тратится на продовольствие, %",
+    "Gini - Коэффициент Джини сообщества", 
+    "Ecol - Издержки сообщества на окружающую среду, млн. $",
+    "LTE - Охват беспроводной связи в сообществе, %",
+    "VirDeath - Количество смертей от вирусных и респираторных заболеваний в сообществе, тыс. человек",
+    "PVol - Волатильность потребительских цен в сообществе",
+    sep = "\n")
+```
+Возьмем по топ 2-3 ПП для каждого интересного нам ПС. 
+ExLiv - Gini, Ecol, Lte, PVol
+Corup - AlcAm, Grad, FoodPer
+Нет таких признаков, которые хорошо кореллируют с TechFeel, поэтому рассмотрим другие ПС. 
+
+Возьмем "Свобода граждан самостоятельно принимать жизненно важные решения"	и "Индекс Щедрости", хоть они и имеют умеренную корелляцию с 
+целевой переменной счастья, возможно они будут иметь лучшую взаимосвязь с ПП, чем TechFeel
+
+
+
+Снова построим график корелляции, но для новых ПС. 
+
+```{r}
+cols_ <- c(15, 16, 2:13)  # 14 колонок
+data_pp_ <- df_train[, cols_]  
+colnames(data_pp_) <- c("DecMak","Gen","AvgEarn","AlcAm","FamSize","Grad",
+                        "FoodPer","Gini","Ecol","LTE","VirDeath","PVol")  # 12 имён
+data_pp_ <- data_pp_[, 1:12]  # обрезаем лишние 2 колонки!
+
+# Теперь точно работает твой старый стиль:
+cor.plot(cor(data_pp_, method = "spearman"), cex = 0.5, cex.axis = 0.49, stars = FALSE,
+         pval = corr.test(data_pp_, method = "spearman")$p)
+
+```
+Для DecMak возьме VirDeath, Gini, Ecol
+
+
+
+Но для начала разделим тренировочные данные на валидационные и тренировочные.
+
+```{r}
+#возьмем 7000 строк из df_train и сделаем из этого валидационную выборку
+valid_ind     <- sample.int(n = nrow(df_train), size = 7000)      # 7000 случайных индексов
+train_ind <- setdiff(1:nrow(df_train), valid_ind)              # все остальные
+
+df_valid     <- df_train[valid_ind, ]       # тест
+df_train <- df_train[train_ind, ]  
+```
+
+
+Построи модели для ПС, которые мы будем использовать для предсказания счастья
+```{r}
+DecMakFormula <- formula(`Свобода граждан самостоятельно принимать жизненно важные решения` ~ `Коэффициент Джини сообщества` + `Количество смертей от вирусных и респираторных заболеваний в сообществе, тыс. человек` + `Издержки сообщества на окружающую среду, млн. $`)
+
+DecMakFormula <- formula(`Свобода граждан самостоятельно принимать жизненно важные решения` ~ 
+                          `Коэффициент Джини сообщества` + 
+                          `Количество смертей от вирусных и респираторных заболеваний в сообществе, тыс. человек` + 
+                          `Издержки сообщества на окружающую среду, млн. $`)
+
+CorupFormula <- formula(`Индекс отношения к коррупции` ~ 
+                         `Объем потребленного алкоголя в год, л.` + 
+                         `Доля от дохода семьи которая тратится на продовольствие, %` +
+                         `Количество лет образования`)
+
+DecMakModel <- lm(DecMakFormula, data = df_train)
+CorupModel <- lm(CorupFormula, data = df_train)
+
+summary(DecMakModel)
+summary(CorupModel)
+```
+
+Получили плохую модель для ExpLiv
+Будем строить модель на 2ух признаках
+
+```{r}
+df_valid$DecMak_pred <- predict(DecMakModel, newdata = df_valid)
+df_valid$Corup_pred <- predict(CorupModel, newdata = df_valid)
+```
+
+
+```{r}
+HappyFormula <- formula(Ощущаемое_счастье ~ 
+                          `Индекс отношения к коррупции` +
+                          `Свобода граждан самостоятельно принимать жизненно важные решения`)
+
+HappyModel <- lm(HappyFormula, data = df_train)
+summary(HappyModel)
+```
+
+```{r}
+df_valid_for_happy <- data.frame(
+  `Индекс отношения к коррупции` = df_valid$Corup_pred,  
+  `Свобода граждан самостоятельно принимать жизненно важные решения` = df_valid$DecMak_pred, 
+  check.names = FALSE
+)
+
+df_valid$Happy_pred <- predict(HappyModel, newdata = df_valid_for_happy)
+
+# Считаем метрики
+happy_actual <- df_valid$Ощущаемое_счастье
+happy_pred <- df_valid$Happy_pred
+valid_happy <- !is.na(happy_actual) & !is.na(happy_pred)
+
+RMSE_happy <- sqrt(mean((happy_actual[valid_happy] - happy_pred[valid_happy])^2))
+R2_happy <- cor(happy_actual[valid_happy], happy_pred[valid_happy])^2
+MAE_happy <- mean(abs(happy_actual[valid_happy] - happy_pred[valid_happy]))
+
+cat("Метрики качества модели предсказания счастья:\n",
+    "RMSE:", round(RMSE_happy, 4), "\n",
+    "R^2:", round(R2_happy, 4), "\n",
+    "MAE:", round(MAE_happy, 4), "\n")
+```
+
+
+
+
+
+Применяем к df_pred
+```{r}
+# Предсказываем промежуточные ПС
+df_pred$DecMak_pred <- predict(DecMakModel, newdata = df_pred)
+df_pred$Corup_pred <- predict(CorupModel, newdata = df_pred)
+
+cat("DecMak - NA:", sum(is.na(df_pred$DecMak_pred)), "\n")
+cat("Corup - NA:", sum(is.na(df_pred$Corup_pred)), "\n")
+df_pred_for_happy <- df_pred[, c("Индекс отношения к коррупции", 
+                                  "Свобода граждан самостоятельно принимать жизненно важные решения")]
+df_pred_for_happy$`Индекс отношения к коррупции` <- df_pred$Corup_pred
+df_pred_for_happy$`Свобода граждан самостоятельно принимать жизненно важные решения` <- df_pred$DecMak_pred
+
+df_pred$Ощущаемое_счастье_pred <- predict(HappyModel, newdata = df_pred_for_happy)
+```
+
+
+Выгрузка в эксель
+```{r}
+# Выгрузка результатов
+if (!dir.exists("results")) {
+  dir.create("results")
+  cat("Создана папка 'results'\n")
+} else {
+  cat("Папка 'results' уже существует\n")
+}
+
+happiness_predictions <- data.frame(
+  Респондент = df_pred$Респондент,
+  Ощущаемое_счастье = round(df_pred$Ощущаемое_счастье_pred, 4)
+)
+
+write_xlsx(happiness_predictions, "results/predictions_happiness.xlsx")
+```
+
+
+[GeeksForGeeks](https://www.geeksforgeeks.org/r-language/visualize-correlation-matrix-using-correlogram-in-r-programming/)
+
+[GeeksForGeeks](https://www.geeksforgeeks.org/r-language/how-to-plot-the-linear-regression-in-r/)
+
+[GeeksForGeeks](https://www.geeksforgeeks.org/r-machine-learning/package-e1071-in-r/?ysclid=mik5wb2cuu874841828)
+
+[GeeksForGeeks](https://www.geeksforgeeks.org/r-machine-learning/introduction-to-machine-learning-in-r/)
+
+[GeeksForGeeks](https://www.geeksforgeeks.org/r-language/classifying-data-using-support-vector-machinessvms-in-r/)
+
+
